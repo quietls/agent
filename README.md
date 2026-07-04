@@ -61,7 +61,7 @@ docker run --rm quietls/agent:latest --help
 The bootstrapper script automates the full installation:
 
 ```bash
-SSL_AGENT_TOKEN=<token> wget -qO- https://api.quietls.com/install | sh
+SSL_AGENT_TOKEN=<token> wget -qO- https://api.quietls.com/v1/agents/install | sh
 ```
 
 This will:

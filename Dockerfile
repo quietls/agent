@@ -20,4 +20,4 @@ RUN apk add --no-cache ca-certificates
 COPY --from=builder /ssl-agent /usr/local/bin/ssl-agent
 
 ENTRYPOINT ["ssl-agent"]
-CMD ["--help"]
+CMD ["daemon"]
