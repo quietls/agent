@@ -1,0 +1,26 @@
+FROM rockylinux:8
+
+# Rocky 8 has no `lsb-release` package; OS detection falls back to /etc/os-release.
+RUN dnf install -y \
+    ca-certificates curl openssl iproute \
+    epel-release \
+    && dnf install -y nginx httpd python3 \
+    && dnf clean all
+
+RUN mkdir -p /etc/nginx/ssl /etc/httpd/ssl
+
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY apache.conf /etc/httpd/conf.d/000-default.conf
+
+RUN openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /etc/nginx/ssl/nother.one.key \
+    -out /etc/nginx/ssl/nother.one.crt \
+    -subj "/CN=nother.one"
+
+COPY ssl-agent-linux /usr/local/bin/ssl-agent
+COPY mock-backend-linux /usr/local/bin/mock-backend
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/ssl-agent /usr/local/bin/mock-backend /usr/local/bin/entrypoint.sh
+
+WORKDIR /app
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

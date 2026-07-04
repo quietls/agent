@@ -1,0 +1,5 @@
+bin/
+*.md
+Makefile
+package.json
+scripts/

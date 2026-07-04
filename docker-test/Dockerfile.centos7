@@ -1,0 +1,35 @@
+FROM centos:7
+
+# CentOS 7 reached EOL (June 2024); mirrorlist.centos.org is gone.
+# Repoint the base repos to the frozen vault.centos.org archive.
+RUN sed -i -e 's|^mirrorlist=|#mirrorlist=|g' \
+           -e 's|^#\s*baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' \
+           /etc/yum.repos.d/CentOS-*.repo \
+    && yum install -y ca-certificates curl openssl iproute httpd python3 \
+    && yum clean all
+
+# nginx lives in EPEL, which is also EOL — install it from the Fedora archive.
+RUN yum install -y https://archives.fedoraproject.org/pub/archive/epel/7/x86_64/Packages/e/epel-release-7-14.noarch.rpm \
+    && sed -i -e 's|^metalink=|#metalink=|g' \
+              -e 's|^#\?baseurl=https\?://download.*$|baseurl=https://archives.fedoraproject.org/pub/archive/epel/7/$basearch/|g' \
+              /etc/yum.repos.d/epel*.repo \
+    && yum install -y nginx \
+    && yum clean all
+
+RUN mkdir -p /etc/nginx/ssl /etc/httpd/ssl
+
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY apache.conf /etc/httpd/conf.d/000-default.conf
+
+RUN openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /etc/nginx/ssl/nother.one.key \
+    -out /etc/nginx/ssl/nother.one.crt \
+    -subj "/CN=nother.one"
+
+COPY ssl-agent-linux /usr/local/bin/ssl-agent
+COPY mock-backend-linux /usr/local/bin/mock-backend
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/ssl-agent /usr/local/bin/mock-backend /usr/local/bin/entrypoint.sh
+
+WORKDIR /app
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

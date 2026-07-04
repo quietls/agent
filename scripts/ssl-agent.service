@@ -1,0 +1,31 @@
+[Unit]
+Description=SSL Agent Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ssl-agent
+Group=ssl-agent
+ExecStart=/usr/local/bin/ssl-agent daemon
+Restart=on-failure
+RestartSec=10
+
+# Sandboxing
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/etc/ssl-agent /etc/nginx/ssl /etc/apache2/ssl /etc/httpd/conf.d
+CapabilityBoundingSet=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+MemoryDenyWriteExecute=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

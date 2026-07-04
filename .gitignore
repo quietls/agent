@@ -1,0 +1,16 @@
+# Build output
+/bin/
+
+# Compiled test artifacts (built on demand by docker-test/run-detection-test.sh)
+docker-test/ssl-agent-linux
+docker-test/mock-backend-linux
+
+# Test & coverage output
+*.out
+coverage.*
+
+# Logs
+*.log
+
+# Editor / OS
+.DS_Store
