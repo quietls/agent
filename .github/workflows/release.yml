@@ -1,0 +1,108 @@
+name: Release
+
+# Auto-release on every push to main:
+#   1. run tests   2. compute the next patch version (bump from the latest v* tag)
+#   3. create & push the tag   4. build + push the multi-arch Docker image
+#   5. create a GitHub Release with generated notes
+#
+# Add "[skip release]" to a commit message to land on main without releasing
+# (e.g. docs/CI-only changes). Bigger bumps (minor/major) are cut manually by
+# pushing a tag yourself (e.g. `git tag v0.2.0 && git push origin v0.2.0`),
+# which the docker-publish.yml workflow publishes; the next main push then
+# auto-bumps the patch from there (v0.2.0 -> v0.2.1).
+#
+# One workflow does tag + build because tags pushed by the built-in GITHUB_TOKEN
+# do not trigger other workflows — a separate tag-triggered publish would never fire.
+#
+# Required repository secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # push tags and create releases
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Compute next version
+        id: ver
+        run: |
+          latest=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+          latest=${latest:-v0.0.0}
+          IFS='.' read -r major minor patch <<< "${latest#v}"
+          major=${major:-0}; minor=${minor:-0}; patch=${patch:-0}
+          next="${major}.${minor}.$((patch + 1))"
+          {
+            echo "version=${next}"
+            echo "tag=v${next}"
+            echo "majorminor=${major}.${minor}"
+            echo "major=${major}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Latest tag: ${latest} -> next: v${next}"
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.ver.outputs.tag }}" -m "${{ steps.ver.outputs.tag }}"
+          git push origin "${{ steps.ver.outputs.tag }}"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            quietls/agent:${{ steps.ver.outputs.version }}
+            quietls/agent:${{ steps.ver.outputs.majorminor }}
+            quietls/agent:${{ steps.ver.outputs.major }}
+            quietls/agent:latest
+          build-args: |
+            VERSION=${{ steps.ver.outputs.version }}
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" \
+            --title "${{ steps.ver.outputs.tag }}" \
+            --generate-notes

@@ -1,11 +1,14 @@
 name: Publish Docker image
 
-# Builds a multi-arch image and pushes it to Docker Hub on version tags.
+# Publishes a multi-arch image to Docker Hub for a MANUALLY pushed version tag.
 #
-# NOTE: This workflow is designed for the standalone open-source repo where this
-# file sits at .github/workflows/ and the Dockerfile is at the repo root. Inside
-# the monorepo (apps/agent/.github/...) GitHub does not run it — it activates
-# automatically once apps/agent is extracted into its own repository.
+# Patch releases are automatic — see release.yml, which fires on every push to
+# main. Use this workflow for bigger bumps: push a tag yourself, e.g.
+#   git tag v0.2.0 && git push origin v0.2.0
+# and the next main push auto-bumps the patch from there (v0.2.0 -> v0.2.1).
+#
+# (A tag created by release.yml's GITHUB_TOKEN does NOT trigger this workflow,
+# so there is no double build — this only runs for human/PAT tag pushes.)
 #
 # Required repository secrets:
 #   DOCKERHUB_USERNAME  — Docker Hub account/org with push access to quietls/agent
