@@ -248,7 +248,7 @@ func (d *Daemon) sendContextUpdate() {
 	})
 
 	var wsCtx *httpclient.WebServerUpdateContext
-	var domains []string
+	domains := []string{}
 	if ws != nil {
 		wsCtx = &httpclient.WebServerUpdateContext{
 			Type:    ws.Type,
