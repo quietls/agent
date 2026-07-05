@@ -204,7 +204,7 @@ func TestDaemon_SendsContextUpdateOnStart(t *testing.T) {
 	fs.files["/tmp/ctx-test.json"] = cfgData
 
 	daemon := NewDaemon("/tmp/ctx-test.json", "0.0.1", DaemonDeps{
-		Executor: &mockOSExecutor{},
+		Executor: &mockOSExecutor{existsFiles: map[string]bool{"/custom/nginx.conf": true}},
 		FileIO:   fs,
 		Logger:   slog.New(slog.NewTextHandler(&strings.Builder{}, nil)),
 		Now:      time.Now,
@@ -246,7 +246,9 @@ func TestDaemon_SendsContextUpdateOnStart(t *testing.T) {
 }
 
 // mockOSExecutor is a no-op executor for daemon tests.
-type mockOSExecutor struct{}
+type mockOSExecutor struct {
+	existsFiles map[string]bool
+}
 
 func (m *mockOSExecutor) ExecCommand(name string, args ...string) (string, string, error) {
 	return "", "", nil
@@ -265,5 +267,5 @@ func (m *mockOSExecutor) ReadDir(path string) ([]os.DirEntry, error) {
 }
 
 func (m *mockOSExecutor) FileExists(path string) bool {
-	return false
+	return m.existsFiles[path]
 }

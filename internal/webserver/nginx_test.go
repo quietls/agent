@@ -115,16 +115,7 @@ func TestDetectNginx(t *testing.T) {
 
 func TestDetectNginx_ConfigPathFromOverride(t *testing.T) {
 	exe := newMockExecutor()
-	exe.commands["nginx -v"] = struct {
-		stdout string
-		stderr string
-		err    error
-	}{"", "nginx version: nginx/1.24.0\n", nil}
-	exe.commands["nginx -V"] = struct {
-		stdout string
-		stderr string
-		err    error
-	}{"", "nginx version: nginx/1.24.0 --conf-path=/etc/nginx/nginx.conf", nil}
+	exe.existsFiles["/custom/nginx.conf"] = true
 	exe.files["/custom/nginx.conf"] = []byte(`http { server { listen 80; } }`)
 
 	info := DetectNginxWithOptions(exe, DetectOptions{
@@ -138,6 +129,57 @@ func TestDetectNginx_ConfigPathFromOverride(t *testing.T) {
 	}
 	if info.ConfigSource != "config_override" {
 		t.Fatalf("expected config source config_override, got %q", info.ConfigSource)
+	}
+}
+
+func TestDetectNginx_ConfigPathOverrideWithoutNginxBinary(t *testing.T) {
+	// Simulates the sidecar deployment: no nginx binary installed, but the nginx
+	// config is mounted into the agent container. Detection must succeed purely
+	// from the config file.
+	exe := newMockExecutor()
+	exe.existsFiles["/mnt/nginx/nginx.conf"] = true
+	exe.files["/mnt/nginx/nginx.conf"] = []byte(`
+http {
+    server {
+        listen 443 ssl;
+        server_name toddlerif.online;
+        ssl_certificate /etc/letsencrypt/live/toddlerif.online/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/toddlerif.online/privkey.pem;
+    }
+}
+`)
+
+	info := DetectNginxWithOptions(exe, DetectOptions{
+		ConfigPathOverride: "/mnt/nginx/nginx.conf",
+	})
+	if info == nil {
+		t.Fatal("expected nginx to be detected via config override without binary")
+	}
+	if info.Version != "" {
+		t.Errorf("expected empty version when binary absent, got %q", info.Version)
+	}
+	if len(info.Vhosts) != 1 {
+		t.Fatalf("expected 1 vhost, got %d", len(info.Vhosts))
+	}
+	if info.Vhosts[0].ServerName != "toddlerif.online" {
+		t.Errorf("expected server_name toddlerif.online, got %q", info.Vhosts[0].ServerName)
+	}
+	if !info.Vhosts[0].SSLEnabled {
+		t.Error("expected SSL to be enabled")
+	}
+	if info.Vhosts[0].CertPath != "/etc/letsencrypt/live/toddlerif.online/fullchain.pem" {
+		t.Errorf("unexpected cert path: %q", info.Vhosts[0].CertPath)
+	}
+}
+
+func TestDetectNginx_ConfigPathOverrideMissingFile(t *testing.T) {
+	exe := newMockExecutor()
+
+	info := DetectNginxWithOptions(exe, DetectOptions{
+		ConfigPathOverride: "/nonexistent/nginx.conf",
+	})
+	if info != nil {
+		t.Error("expected nil when override file does not exist")
 	}
 }
 

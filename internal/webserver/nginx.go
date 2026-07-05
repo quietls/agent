@@ -43,16 +43,23 @@ func DetectNginx(exe platform.Executor) *WebServerInfo {
 
 // DetectNginxWithOptions detects nginx and parses its vhost configuration.
 func DetectNginxWithOptions(exe platform.Executor, opts DetectOptions) *WebServerInfo {
-	// Try nginx -v (outputs to stderr)
-	_, stderr, err := exe.ExecCommand("nginx", "-v")
-	if err != nil {
-		return nil
-	}
-
 	version := ""
-	matches := nginxVersionRe.FindStringSubmatch(stderr)
-	if len(matches) >= 2 {
-		version = matches[1]
+
+	// When an explicit config path override is provided, the nginx binary may
+	// not be present (e.g. the agent runs in a sidecar container that only
+	// mounts the nginx config). Skip the binary probe and parse the config
+	// file directly. Version is left empty since we cannot determine it.
+	if strings.TrimSpace(opts.ConfigPathOverride) == "" {
+		// Try nginx -v (outputs to stderr)
+		_, stderr, err := exe.ExecCommand("nginx", "-v")
+		if err != nil {
+			return nil
+		}
+
+		matches := nginxVersionRe.FindStringSubmatch(stderr)
+		if len(matches) >= 2 {
+			version = matches[1]
+		}
 	}
 
 	info := &WebServerInfo{
@@ -62,6 +69,16 @@ func DetectNginxWithOptions(exe platform.Executor, opts DetectOptions) *WebServe
 	}
 
 	configPath, source := resolveNginxConfigPath(exe, opts.ConfigPathOverride)
+
+	// When using a config override without the nginx binary, bail out if the
+	// override file doesn't exist or can't be read — otherwise we'd return a
+	// nginx "detection" with no vhosts, masking a misconfiguration.
+	if strings.TrimSpace(opts.ConfigPathOverride) != "" {
+		if !exe.FileExists(configPath) {
+			return nil
+		}
+	}
+
 	info.ConfigPath = configPath
 	info.ConfigSource = source
 
