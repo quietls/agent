@@ -179,6 +179,7 @@ func (d *Daemon) processCommands(cmds []httpclient.CommandMessage) {
 			HTTPClient:  d.client,
 			Executor:    d.deps.Executor,
 			NonceStore:  d.nonceStore,
+			ConfigPath:  d.config.ConfigPath,
 		})
 
 		d.deps.Logger.Info("Command completed",

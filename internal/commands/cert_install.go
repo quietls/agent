@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/quietls/agent/internal/platform"
-	"github.com/quietls/agent/internal/webserver"
 )
 
 // domainRe validates a simple hostname: dot-separated labels of 1-63
@@ -81,7 +80,7 @@ func handleCertInstall(ctx HandlerContext) CommandResult {
 
 	// Detect web server if not provided
 	if webServerType == "" {
-		ws := webserver.DetectWebServer(ctx.Executor)
+		ws := ctx.detectWebServer()
 		if ws != nil {
 			webServerType = ws.Type
 		}

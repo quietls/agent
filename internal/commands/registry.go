@@ -21,6 +21,18 @@ type HandlerContext struct {
 	Parameters map[string]any
 	Executor   platform.Executor
 	HTTPClient *httpclient.Client
+	ConfigPath string
+}
+
+// detectWebServer resolves the web server using the agent's configured
+// config_path override (for sidecar deployments without a local nginx binary)
+// when set, falling back to standard binary-based detection otherwise.
+func (ctx HandlerContext) detectWebServer() *webserver.WebServerInfo {
+	opts := webserver.DetectOptions{}
+	if ctx.ConfigPath != "" {
+		opts.ConfigPathOverride = ctx.ConfigPath
+	}
+	return webserver.DetectWebServerWithOptions(ctx.Executor, opts)
 }
 
 // Handler is a function that executes a command.
@@ -56,7 +68,8 @@ func GetSupportedCommands() []string {
 // ── Handlers ────────────────────────────────────────────────────
 
 func handleCertScan(ctx HandlerContext) CommandResult {
-	certPaths := collectCertPaths(ctx.Executor)
+	ws := ctx.detectWebServer()
+	certPaths := collectCertPathsFromWebServer(ws)
 	certList := certs.ScanCerts(ctx.Executor, certPaths)
 
 	certsOut := make([]any, len(certList))
@@ -75,7 +88,7 @@ func handleCertScan(ctx HandlerContext) CommandResult {
 }
 
 func handleWebserverDetect(ctx HandlerContext) CommandResult {
-	info := webserver.DetectWebServer(ctx.Executor)
+	info := ctx.detectWebServer()
 
 	output := map[string]any{"web_server": nil, "domains": []string{}}
 	if info != nil {
@@ -181,7 +194,7 @@ func handleWebserverConfigValidate(ctx HandlerContext) CommandResult {
 
 func handleAgentStatus(ctx HandlerContext) CommandResult {
 	osInfo := platform.DetectOS(ctx.Executor)
-	ws := webserver.DetectWebServer(ctx.Executor)
+	ws := ctx.detectWebServer()
 	certPaths := collectCertPathsFromWebServer(ws)
 	certList := certs.ScanCerts(ctx.Executor, certPaths)
 	ports := platform.DetectPorts(ctx.Executor)
@@ -200,12 +213,6 @@ func handleAgentStatus(ctx HandlerContext) CommandResult {
 		Status: "success",
 		Output: output,
 	}
-}
-
-// collectCertPaths detects the web server and extracts cert paths from vhosts.
-func collectCertPaths(exe platform.Executor) []string {
-	ws := webserver.DetectWebServer(exe)
-	return collectCertPathsFromWebServer(ws)
 }
 
 // collectCertPathsFromWebServer extracts cert paths from an already-detected web server.

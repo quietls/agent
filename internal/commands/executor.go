@@ -30,6 +30,7 @@ type ExecutorDeps struct {
 	Executor    platform.Executor
 	NonceStore  *security.NonceStore
 	TimeoutMs   int
+	ConfigPath  string
 }
 
 // ExecuteCommand validates and executes a command message.
@@ -90,6 +91,7 @@ func ExecuteCommand(cmd httpclient.CommandMessage, deps ExecutorDeps) ExecutionR
 			Parameters: cmd.Parameters,
 			Executor:   deps.Executor,
 			HTTPClient: deps.HTTPClient,
+			ConfigPath: deps.ConfigPath,
 		}
 		r := handler(hCtx)
 		ch <- handlerResult{result: r}

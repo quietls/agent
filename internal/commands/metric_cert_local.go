@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/quietls/agent/internal/certs"
-	"github.com/quietls/agent/internal/webserver"
 )
 
 func handleMetricCertLocal(ctx HandlerContext) CommandResult {
@@ -24,7 +23,7 @@ func handleMetricCertLocal(ctx HandlerContext) CommandResult {
 
 	// If cert_path not provided, detect from web server vhosts
 	if certPath == "" {
-		ws := webserver.DetectWebServer(ctx.Executor)
+		ws := ctx.detectWebServer()
 		if ws != nil {
 			for i := range ws.Vhosts {
 				for _, name := range ws.Vhosts[i].ServerNames {

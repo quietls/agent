@@ -27,7 +27,7 @@ func handleMetricTlsDrift(ctx HandlerContext) CommandResult {
 		}
 	}
 
-	ws := webserver.DetectWebServer(ctx.Executor)
+	ws := ctx.detectWebServer()
 	if ws == nil {
 		return CommandResult{
 			Status: "failure",
