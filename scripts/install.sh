@@ -2,11 +2,11 @@
 # ssl-agent bootstrapper — installs and registers the SSL agent
 #
 # Usage (production):
-#   SSL_AGENT_TOKEN=<token> curl -sSL https://api.quietls.com/v1/agents/install | sh
+#   SSL_AGENT_TOKEN=<token> curl -sSL https://quietls.com/v1/agents/install | sh
 #
 # Environment variables:
 #   SSL_AGENT_TOKEN          (required) Setup token from the dashboard
-#   SSL_AGENT_BASE_URL       (optional) Backend API URL (default: https://api.quietls.com/v1)
+#   SSL_AGENT_BASE_URL       (optional) Backend API URL (default: https://quietls.com/v1)
 #   SSL_AGENT_VERSION        (optional) Version tag to install (default: latest)
 #   SSL_AGENT_SKIP_SIGNATURE (optional) Skip minisign verification when the backend
 #                            does not yet publish signatures (not recommended for prod)
@@ -21,7 +21,7 @@ set -eu
 
 # ── Configuration ────────────────────────────────────────────────
 
-API_BASE_URL="${SSL_AGENT_BASE_URL:-https://api.quietls.com/v1}"
+API_BASE_URL="${SSL_AGENT_BASE_URL:-https://quietls.com/v1}"
 TOKEN="${SSL_AGENT_TOKEN:-}"
 VERSION="${SSL_AGENT_VERSION:-latest}"
 BINARY_PATH="/usr/local/bin/ssl-agent"

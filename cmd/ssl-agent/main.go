@@ -60,7 +60,7 @@ Commands:
 
 Options:
   --token, -t <token>    API token (or set SSL_AGENT_TOKEN)
-  --base-url <url>       Backend URL (default: https://api.quietls.com/v1)
+  --base-url <url>       Backend URL (default: https://quietls.com/v1)
   --config <path>        Config file path (default: /etc/ssl-agent/config.json)
   --version              Show version
   --help                 Show this help
@@ -69,7 +69,7 @@ Options:
 
 func runSetup() error {
 	token := ""
-	baseURL := "https://api.quietls.com/v1"
+	baseURL := "https://quietls.com/v1"
 	configPath := ""
 
 	args := os.Args[2:]

@@ -61,7 +61,7 @@ docker run --rm quietls/agent:latest --help
 The bootstrapper script automates the full installation:
 
 ```bash
-SSL_AGENT_TOKEN=<token> wget -qO- https://api.quietls.com/v1/agents/install | sh
+SSL_AGENT_TOKEN=<token> wget -qO- https://quietls.com/v1/agents/install | sh
 ```
 
 This will:
@@ -91,7 +91,7 @@ ssl-agent <command> [options]
 | Flag               | Env Var           | Default                         | Description       |
 |--------------------|-------------------|---------------------------------|-------------------|
 | `--token`, `-t`    | `SSL_AGENT_TOKEN` | —                               | API token         |
-| `--base-url`       | —                 | `https://api.quietls.com/v1`    | Backend URL       |
+| `--base-url`       | —                 | `https://quietls.com/v1`    | Backend URL       |
 | `--config`         | —                 | `/etc/ssl-agent/config.json`    | Config file path  |
 | `--version`, `-v`  | —                 | —                               | Show version      |
 | `--help`, `-h`     | —                 | —                               | Show help         |
@@ -125,7 +125,7 @@ ssl-agent status
 Output example:
 ```
 Agent ID: ag_abc123
-Backend:  https://api.quietls.com/v1
+Backend:  https://quietls.com/v1
 
 OS:       Ubuntu 22.04 (x86_64)
 Runtime:  host
@@ -143,7 +143,7 @@ Stored at `/etc/ssl-agent/config.json` with restricted permissions (`0600`).
   "agent_id": "ag_abc123",
   "agent_token": "tok_...",
   "agent_secret": "sec_...",
-  "base_url": "https://api.quietls.com/v1",
+  "base_url": "https://quietls.com/v1",
   "platform_profile": "ubuntu-nginx",
   "poll_interval": 30
 }

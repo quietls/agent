@@ -40,7 +40,7 @@ func Setup(opts SetupOptions, deps SetupDeps) error {
 		return fmt.Errorf("token is required (use --token or SSL_AGENT_TOKEN env var)")
 	}
 	if opts.BaseURL == "" {
-		opts.BaseURL = "https://api.quietls.com/v1"
+		opts.BaseURL = "https://quietls.com/v1"
 	}
 	if opts.ConfigPath == "" {
 		opts.ConfigPath = DefaultConfigPath
