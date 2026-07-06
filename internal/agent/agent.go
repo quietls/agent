@@ -82,6 +82,16 @@ func (d *Daemon) Start() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
+	// Env override: SSL_AGENT_CONFIG_PATH lets operators point the agent at the
+	// web server config without editing the persisted config.json. This is
+	// essential for sidecar deployments where the nginx/apache config is mounted
+	// into the container but the config.json is on a named volume that may be
+	// reset on redeploy. Env wins over the file value so the compose file is the
+	// single source of truth.
+	if envPath := os.Getenv("SSL_AGENT_CONFIG_PATH"); envPath != "" {
+		cfg.ConfigPath = envPath
+	}
+
 	d.config = cfg
 	d.client = httpclient.New(cfg.BaseURL, cfg.AgentID, cfg.AgentToken, nil)
 	d.running.Store(true)

@@ -125,6 +125,112 @@ func TestDaemon_ConfigNotFound(t *testing.T) {
 	}
 }
 
+func TestDaemon_EnvConfigPathOverride(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/context"):
+			w.WriteHeader(200)
+			return
+		case strings.HasSuffix(r.URL.Path, "/commands"):
+			json.NewEncoder(w).Encode(map[string]any{"commands": []any{}})
+			return
+		case strings.HasSuffix(r.URL.Path, "/heartbeat"):
+			json.NewEncoder(w).Encode(map[string]any{"ack": true, "server_time": "2026-01-01T00:00:00Z"})
+			return
+		default:
+			w.WriteHeader(200)
+		}
+	}))
+	defer srv.Close()
+
+	// Config file has no config_path set.
+	cfg := &Config{
+		AgentID:      "ag_env_test",
+		AgentToken:   "tok_test",
+		AgentSecret:  "sec_test",
+		BaseURL:      srv.URL,
+		PollInterval: 30,
+	}
+	cfgData, _ := json.Marshal(cfg)
+
+	fs := newMockFileIO()
+	fs.files["/tmp/env-test.json"] = cfgData
+
+	t.Setenv("SSL_AGENT_CONFIG_PATH", "/mnt/nginx/nginx.conf")
+
+	daemon := NewDaemon("/tmp/env-test.json", "0.0.1", DaemonDeps{
+		Executor: &mockOSExecutor{},
+		FileIO:   fs,
+		Logger:   slog.New(slog.NewTextHandler(&strings.Builder{}, nil)),
+		Now:      time.Now,
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- daemon.Start() }()
+	time.Sleep(50 * time.Millisecond)
+	daemon.Stop()
+	<-done
+
+	if daemon.config == nil {
+		t.Fatal("config should be loaded")
+	}
+	if daemon.config.ConfigPath != "/mnt/nginx/nginx.conf" {
+		t.Errorf("expected config_path '/mnt/nginx/nginx.conf' from env override, got %q", daemon.config.ConfigPath)
+	}
+}
+
+func TestDaemon_EnvConfigPathOverridesFileValue(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/context"):
+			w.WriteHeader(200)
+			return
+		case strings.HasSuffix(r.URL.Path, "/commands"):
+			json.NewEncoder(w).Encode(map[string]any{"commands": []any{}})
+			return
+		case strings.HasSuffix(r.URL.Path, "/heartbeat"):
+			json.NewEncoder(w).Encode(map[string]any{"ack": true, "server_time": "2026-01-01T00:00:00Z"})
+			return
+		default:
+			w.WriteHeader(200)
+		}
+	}))
+	defer srv.Close()
+
+	// Config file sets config_path to the file value; env should win.
+	cfg := &Config{
+		AgentID:      "ag_env_test2",
+		AgentToken:   "tok_test",
+		AgentSecret:  "sec_test",
+		BaseURL:      srv.URL,
+		ConfigPath:   "/etc/nginx/nginx.conf",
+		PollInterval: 30,
+	}
+	cfgData, _ := json.Marshal(cfg)
+
+	fs := newMockFileIO()
+	fs.files["/tmp/env-test2.json"] = cfgData
+
+	t.Setenv("SSL_AGENT_CONFIG_PATH", "/mnt/nginx/nginx.conf")
+
+	daemon := NewDaemon("/tmp/env-test2.json", "0.0.1", DaemonDeps{
+		Executor: &mockOSExecutor{},
+		FileIO:   fs,
+		Logger:   slog.New(slog.NewTextHandler(&strings.Builder{}, nil)),
+		Now:      time.Now,
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- daemon.Start() }()
+	time.Sleep(50 * time.Millisecond)
+	daemon.Stop()
+	<-done
+
+	if daemon.config.ConfigPath != "/mnt/nginx/nginx.conf" {
+		t.Errorf("env should override file; expected '/mnt/nginx/nginx.conf', got %q", daemon.config.ConfigPath)
+	}
+}
+
 func TestDaemon_PollError(t *testing.T) {
 	// Server returns errors
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

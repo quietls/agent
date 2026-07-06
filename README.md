@@ -88,13 +88,14 @@ ssl-agent <command> [options]
 
 ### Global Options
 
-| Flag               | Env Var           | Default                         | Description       |
-|--------------------|-------------------|---------------------------------|-------------------|
-| `--token`, `-t`    | `SSL_AGENT_TOKEN` | —                               | API token         |
-| `--base-url`       | —                 | `https://quietls.com/v1`    | Backend URL       |
-| `--config`         | —                 | `/etc/ssl-agent/config.json`    | Config file path  |
-| `--version`, `-v`  | —                 | —                               | Show version      |
-| `--help`, `-h`     | —                 | —                               | Show help         |
+| Flag               | Env Var                   | Default                         | Description       |
+|--------------------|---------------------------|---------------------------------|-------------------|
+| `--token`, `-t`    | `SSL_AGENT_TOKEN`         | —                               | API token         |
+| `--base-url`       | —                         | `https://quietls.com/v1`    | Backend URL       |
+| `--config`         | —                         | `/etc/ssl-agent/config.json`    | Config file path  |
+| —                  | `SSL_AGENT_CONFIG_PATH`   | —                               | Path to the web server config (nginx.conf/apache.conf). Required for sidecar deployments without a local `nginx`/`apache2` binary; overrides `config_path` in `config.json`. |
+| `--version`, `-v`  | —                         | —                               | Show version      |
+| `--help`, `-h`     | —                         | —                               | Show help         |
 
 ### Setup
 
@@ -214,10 +215,55 @@ All authenticated requests include `Authorization: Bearer <token>` and `X-Agent-
 
 ## Docker Support
 
-The agent detects Docker runtime by checking for `/.dockerenv`. In Docker environments, the agent runs as a sidecar container alongside the web server. Certificates are shared via a named Docker volume.
+The agent detects Docker runtime by checking for `/.dockerenv`. In Docker
+environments, the agent runs as a sidecar container alongside the web server.
 
-The published `quietls/agent` image sets `ssl-agent` as its entrypoint, so any
-CLI invocation works directly:
+### Sidecar with nginx in a separate container
+
+When the web server (nginx/apache) runs in its own container — the common
+case for docker-compose stacks — the agent container has no local `nginx`
+binary and no web server config of its own. Two things are required so the
+agent's metric handlers (`metric.tls-drift`, `metric.cert-local`) and
+`webserver.detect` can work:
+
+1. **Mount the web server config** into the agent container so the agent can
+   read the vhosts and cert paths.
+2. **Point the agent at it** via `SSL_AGENT_CONFIG_PATH`. When set, the agent
+   parses the config file directly without requiring the `nginx` binary, and
+   this env var overrides any `config_path` stored in `config.json` (so the
+   named config volume can be reset on redeploy without manual cleanup).
+
+Minimal `docker-compose.yml` snippet:
+
+```yaml
+services:
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+
+  quietls-agent:
+    image: quietls/agent:latest
+    restart: unless-stopped
+    environment:
+      - SSL_AGENT_TOKEN=${SSL_AGENT_TOKEN}
+      # Path inside this container to the mounted web server config. Required
+      # for sidecar deployments so the agent can detect the web server.
+      - SSL_AGENT_CONFIG_PATH=/mnt/nginx/nginx.conf
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt
+      # Mount the same nginx config the nginx container uses:
+      - ./nginx/nginx.conf:/mnt/nginx/nginx.conf:ro
+      # Persisted agent config (agent_id, tokens, secret) across restarts:
+      - quietls_config:/etc/ssl-agent
+
+volumes:
+  quietls_config:
+```
+
+The published `quietls/agent` image sets `ssl-agent` as its entrypoint, so
+any CLI invocation works directly:
 
 ```bash
 docker run --rm \
