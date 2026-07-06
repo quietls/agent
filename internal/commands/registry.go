@@ -22,6 +22,11 @@ type HandlerContext struct {
 	Executor   platform.Executor
 	HTTPClient *httpclient.Client
 	ConfigPath string
+	// ReloadCommand is an operator-provided command used to reload the web
+	// server. Required for sidecar deployments where the web server runs in a
+	// separate container and the agent has no local nginx/apache binary. When
+	// empty, handlers fall back to in-container reload (nginx -s reload, etc.).
+	ReloadCommand string
 }
 
 // detectWebServer resolves the web server using the agent's configured

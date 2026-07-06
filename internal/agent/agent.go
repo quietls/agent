@@ -92,6 +92,14 @@ func (d *Daemon) Start() error {
 		cfg.ConfigPath = envPath
 	}
 
+	// Env override: SSL_AGENT_RELOAD_COMMAND provides the command used to reload
+	// the web server. Essential for sidecar deployments where nginx/apache runs
+	// in a separate container (e.g. "docker exec nginx nginx -s reload"). Env
+	// wins over config.json so the compose file is the single source of truth.
+	if reloadCmd := os.Getenv("SSL_AGENT_RELOAD_COMMAND"); reloadCmd != "" {
+		cfg.ReloadCommand = reloadCmd
+	}
+
 	d.config = cfg
 	d.client = httpclient.New(cfg.BaseURL, cfg.AgentID, cfg.AgentToken, nil)
 	d.running.Store(true)
@@ -185,11 +193,12 @@ func (d *Daemon) processCommands(cmds []httpclient.CommandMessage) {
 		)
 
 		result := commands.ExecuteCommand(cmd, commands.ExecutorDeps{
-			AgentSecret: d.config.AgentSecret,
-			HTTPClient:  d.client,
-			Executor:    d.deps.Executor,
-			NonceStore:  d.nonceStore,
-			ConfigPath:  d.config.ConfigPath,
+			AgentSecret:   d.config.AgentSecret,
+			HTTPClient:    d.client,
+			Executor:      d.deps.Executor,
+			NonceStore:    d.nonceStore,
+			ConfigPath:    d.config.ConfigPath,
+			ReloadCommand: d.config.ReloadCommand,
 		})
 
 		d.deps.Logger.Info("Command completed",

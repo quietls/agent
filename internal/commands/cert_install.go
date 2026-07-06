@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/quietls/agent/internal/platform"
+	"github.com/quietls/agent/internal/webserver"
 )
 
 // domainRe validates a simple hostname: dot-separated labels of 1-63
@@ -78,109 +79,113 @@ func handleCertInstall(ctx HandlerContext) CommandResult {
 		}
 	}
 
-	// Detect web server if not provided
-	if webServerType == "" {
-		ws := ctx.detectWebServer()
-		if ws != nil {
-			webServerType = ws.Type
-		}
+	// Detect the web server. This also surfaces the cert paths referenced by
+	// the parsed config, which lets us install where the server actually reads
+	// (essential for sidecar/Docker deployments).
+	ws := ctx.detectWebServer()
+	if webServerType == "" && ws != nil {
+		webServerType = ws.Type
 	}
 
-	// Determine SSL directory based on web server
-	var sslDir string
-	switch webServerType {
-	case "nginx":
-		sslDir = "/etc/nginx/ssl"
-	case "apache2":
-		sslDir = "/etc/apache2/ssl"
-	default:
-		// Fallback to nginx path, then apache
-		if ctx.Executor.FileExists("/etc/nginx") {
-			sslDir = "/etc/nginx/ssl"
-		} else if ctx.Executor.FileExists("/etc/apache2") {
-			sslDir = "/etc/apache2/ssl"
-		} else {
-			sslDir = "/etc/ssl"
-		}
-	}
-
-	// Ensure SSL directory exists
-	if err := ensureDir(ctx.Executor, sslDir); err != nil {
-		return CommandResult{
-			Status: "failure",
-			Output: map[string]any{},
-			Error:  fmt.Sprintf("failed to create SSL directory %s: %v", sslDir, err),
-		}
-	}
-
-	// Build contained file paths under sslDir.
-	certPath, err := secureCertPath(sslDir, domain, ".crt")
-	if err != nil {
-		return CommandResult{
-			Status: "failure",
-			Output: map[string]any{},
-			Error:  fmt.Sprintf("invalid certificate path: %v", err),
-		}
-	}
-	keyPath, err := secureCertPath(sslDir, domain, ".key")
-	if err != nil {
-		return CommandResult{
-			Status: "failure",
-			Output: map[string]any{},
-			Error:  fmt.Sprintf("invalid key path: %v", err),
-		}
-	}
-	caPath, err := secureCertPath(sslDir, domain, ".ca-bundle")
-	if err != nil {
-		return CommandResult{
-			Status: "failure",
-			Output: map[string]any{},
-			Error:  fmt.Sprintf("invalid CA bundle path: %v", err),
-		}
-	}
-
-	certContent := certPem
+	// nginx's ssl_certificate expects the leaf followed by the intermediate
+	// chain (fullchain); apache's SSLCertificateFile accepts the same.
+	fullchain := certPem
 	if caBundlePem != "" {
-		certContent = certPem + "\n" + caBundlePem
+		fullchain = certPem + "\n" + caBundlePem
 	}
 
-	if err := ctx.Executor.WriteFile(certPath, []byte(certContent)); err != nil {
-		return CommandResult{
-			Status: "failure",
-			Output: map[string]any{},
-			Error:  fmt.Sprintf("failed to write certificate: %v", err),
+	var certPath, keyPath, caPath, sslDir string
+	writeMode := "default"
+
+	if vc, vk, ok := resolveVhostCertPaths(ws, domain); ok {
+		// Preferred: write to the exact paths the web server config references.
+		writeMode = "configured"
+		certPath, keyPath = vc, vk
+
+		if err := ensureDir(ctx.Executor, filepath.Dir(certPath)); err != nil {
+			return failInstall(fmt.Sprintf("failed to create certificate directory %s: %v", filepath.Dir(certPath), err))
 		}
-	}
-
-	if err := ctx.Executor.WriteFile(keyPath, []byte(keyPem)); err != nil {
-		return CommandResult{
-			Status: "failure",
-			Output: map[string]any{},
-			Error:  fmt.Sprintf("failed to write private key: %v", err),
+		if err := ensureDir(ctx.Executor, filepath.Dir(keyPath)); err != nil {
+			return failInstall(fmt.Sprintf("failed to create key directory %s: %v", filepath.Dir(keyPath), err))
 		}
-	}
+		if err := ctx.Executor.WriteFile(certPath, []byte(fullchain)); err != nil {
+			return failInstall(fmt.Sprintf("failed to write certificate: %v", err))
+		}
+		if err := ctx.Executor.WriteFile(keyPath, []byte(keyPem)); err != nil {
+			return failInstall(fmt.Sprintf("failed to write private key: %v", err))
+		}
+	} else {
+		// Fallback: fixed per-server SSL directory with <domain>.crt/.key/.ca-bundle.
+		sslDir = defaultSSLDir(ctx.Executor, webServerType)
+		if err := ensureDir(ctx.Executor, sslDir); err != nil {
+			return failInstall(fmt.Sprintf("failed to create SSL directory %s: %v", sslDir, err))
+		}
 
-	if caBundlePem != "" {
-		if err := ctx.Executor.WriteFile(caPath, []byte(caBundlePem)); err != nil {
-			return CommandResult{
-				Status: "failure",
-				Output: map[string]any{},
-				Error:  fmt.Sprintf("failed to write CA bundle: %v", err),
+		var err error
+		if certPath, err = secureCertPath(sslDir, domain, ".crt"); err != nil {
+			return failInstall(fmt.Sprintf("invalid certificate path: %v", err))
+		}
+		if keyPath, err = secureCertPath(sslDir, domain, ".key"); err != nil {
+			return failInstall(fmt.Sprintf("invalid key path: %v", err))
+		}
+		if caPath, err = secureCertPath(sslDir, domain, ".ca-bundle"); err != nil {
+			return failInstall(fmt.Sprintf("invalid CA bundle path: %v", err))
+		}
+
+		if err := ctx.Executor.WriteFile(certPath, []byte(fullchain)); err != nil {
+			return failInstall(fmt.Sprintf("failed to write certificate: %v", err))
+		}
+		if err := ctx.Executor.WriteFile(keyPath, []byte(keyPem)); err != nil {
+			return failInstall(fmt.Sprintf("failed to write private key: %v", err))
+		}
+		if caBundlePem != "" {
+			if err := ctx.Executor.WriteFile(caPath, []byte(caBundlePem)); err != nil {
+				return failInstall(fmt.Sprintf("failed to write CA bundle: %v", err))
 			}
 		}
 	}
 
-	// Validate web server config
+	baseOutput := map[string]any{
+		"domain":     domain,
+		"cert_path":  certPath,
+		"key_path":   keyPath,
+		"web_server": webServerType,
+		"write_mode": writeMode,
+	}
+	if caPath != "" {
+		baseOutput["ca_path"] = caPath
+	}
+	if sslDir != "" {
+		baseOutput["ssl_dir"] = sslDir
+	}
+
+	// Reload the web server. When an operator-provided reload command is set
+	// (sidecar deployments where nginx runs in a separate container and the
+	// agent has no local nginx binary), use it and skip in-container validation.
+	if ctx.ReloadCommand != "" {
+		stdout, stderr, err := ctx.Executor.ExecCommand("sh", "-c", ctx.ReloadCommand)
+		if err != nil {
+			baseOutput["reload_output"] = stdout + stderr
+			return CommandResult{
+				Status: "failure",
+				Output: baseOutput,
+				Error:  fmt.Sprintf("reload command failed: %v", err),
+			}
+		}
+		baseOutput["reloaded"] = true
+		baseOutput["reload_via"] = "reload_command"
+		return CommandResult{Status: "success", Output: baseOutput}
+	}
+
+	// In-container validate + reload (single-host deployments).
 	var validateOutput, validateError string
 	var validateErr error
-
 	switch webServerType {
 	case "nginx":
 		validateOutput, validateError, validateErr = ctx.Executor.ExecCommand("nginx", "-t")
 	case "apache2":
 		validateOutput, validateError, validateErr = ctx.Executor.ExecCommand("apachectl", "configtest")
 	default:
-		// Try both
 		validateOutput, validateError, validateErr = ctx.Executor.ExecCommand("nginx", "-t")
 		if validateErr != nil {
 			validateOutput, validateError, validateErr = ctx.Executor.ExecCommand("apachectl", "configtest")
@@ -188,19 +193,15 @@ func handleCertInstall(ctx HandlerContext) CommandResult {
 	}
 
 	if validateErr != nil {
+		baseOutput["validation"] = false
+		baseOutput["valid_output"] = validateOutput + validateError
 		return CommandResult{
 			Status: "failure",
-			Output: map[string]any{
-				"cert_path":   certPath,
-				"key_path":    keyPath,
-				"validation":  false,
-				"valid_output": validateOutput + validateError,
-			},
-			Error: fmt.Sprintf("web server config validation failed: %v", validateErr),
+			Output: baseOutput,
+			Error:  fmt.Sprintf("web server config validation failed: %v", validateErr),
 		}
 	}
 
-	// Reload web server
 	var reloadErr error
 	switch webServerType {
 	case "nginx":
@@ -215,31 +216,75 @@ func handleCertInstall(ctx HandlerContext) CommandResult {
 	}
 
 	if reloadErr != nil {
+		baseOutput["validation"] = true
+		baseOutput["valid_output"] = validateOutput + validateError
 		return CommandResult{
 			Status: "failure",
-			Output: map[string]any{
-				"cert_path":   certPath,
-				"key_path":    keyPath,
-				"validation":  true,
-				"valid_output": validateOutput + validateError,
-			},
-			Error: fmt.Sprintf("web server reload failed: %v", reloadErr),
+			Output: baseOutput,
+			Error:  fmt.Sprintf("web server reload failed: %v", reloadErr),
 		}
 	}
 
-	return CommandResult{
-		Status: "success",
-		Output: map[string]any{
-			"domain":       domain,
-			"cert_path":    certPath,
-			"key_path":     keyPath,
-			"ca_path":      caPath,
-			"ssl_dir":      sslDir,
-			"web_server":   webServerType,
-			"validation":   true,
-			"reloaded":     true,
-		},
+	baseOutput["validation"] = true
+	baseOutput["reloaded"] = true
+	baseOutput["reload_via"] = "builtin"
+	return CommandResult{Status: "success", Output: baseOutput}
+}
+
+func failInstall(errMsg string) CommandResult {
+	return CommandResult{Status: "failure", Output: map[string]any{}, Error: errMsg}
+}
+
+// defaultSSLDir returns the conventional SSL directory for a web server type.
+func defaultSSLDir(exe platform.Executor, webServerType string) string {
+	switch webServerType {
+	case "nginx":
+		return "/etc/nginx/ssl"
+	case "apache2":
+		return "/etc/apache2/ssl"
+	default:
+		if exe.FileExists("/etc/nginx") {
+			return "/etc/nginx/ssl"
+		}
+		if exe.FileExists("/etc/apache2") {
+			return "/etc/apache2/ssl"
+		}
+		return "/etc/ssl"
 	}
+}
+
+// resolveVhostCertPaths finds the certificate/key paths that the web server
+// config already references for the given domain. Returns ok=false when no
+// matching vhost with absolute cert paths is found, in which case the caller
+// falls back to the default SSL directory convention.
+func resolveVhostCertPaths(ws *webserver.WebServerInfo, domain string) (certPath, keyPath string, ok bool) {
+	if ws == nil {
+		return "", "", false
+	}
+	for _, v := range ws.Vhosts {
+		if !vhostMatchesDomain(v, domain) {
+			continue
+		}
+		cp := strings.TrimSpace(v.CertPath)
+		kp := strings.TrimSpace(v.CertKeyPath)
+		// Only use absolute paths; a relative/empty path is unusable and unsafe.
+		if strings.HasPrefix(cp, "/") && strings.HasPrefix(kp, "/") {
+			return cp, kp, true
+		}
+	}
+	return "", "", false
+}
+
+func vhostMatchesDomain(v webserver.VhostInfo, domain string) bool {
+	if strings.EqualFold(strings.TrimSpace(v.ServerName), domain) {
+		return true
+	}
+	for _, sn := range v.ServerNames {
+		if strings.EqualFold(strings.TrimSpace(sn), domain) {
+			return true
+		}
+	}
+	return false
 }
 
 func ensureDir(exe platform.Executor, path string) error {

@@ -4,7 +4,135 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/quietls/agent/internal/webserver"
 )
+
+func TestResolveVhostCertPaths(t *testing.T) {
+	ws := &webserver.WebServerInfo{
+		Vhosts: []webserver.VhostInfo{
+			{
+				ServerNames: []string{"toddlerif.online", "www.toddlerif.online"},
+				SSLEnabled:  true,
+				CertPath:    "/etc/letsencrypt/live/toddlerif.online/fullchain.pem",
+				CertKeyPath: "/etc/letsencrypt/live/toddlerif.online/privkey.pem",
+			},
+		},
+	}
+
+	cp, kp, ok := resolveVhostCertPaths(ws, "toddlerif.online")
+	if !ok {
+		t.Fatal("expected a match for toddlerif.online")
+	}
+	if cp != "/etc/letsencrypt/live/toddlerif.online/fullchain.pem" {
+		t.Errorf("unexpected cert path: %s", cp)
+	}
+	if kp != "/etc/letsencrypt/live/toddlerif.online/privkey.pem" {
+		t.Errorf("unexpected key path: %s", kp)
+	}
+
+	// SAN match
+	if _, _, ok := resolveVhostCertPaths(ws, "www.toddlerif.online"); !ok {
+		t.Error("expected a match for the SAN www.toddlerif.online")
+	}
+
+	// No matching vhost
+	if _, _, ok := resolveVhostCertPaths(ws, "other.com"); ok {
+		t.Error("did not expect a match for other.com")
+	}
+
+	// Nil web server info
+	if _, _, ok := resolveVhostCertPaths(nil, "toddlerif.online"); ok {
+		t.Error("did not expect a match for nil web server info")
+	}
+
+	// Relative/empty paths are rejected
+	wsRel := &webserver.WebServerInfo{
+		Vhosts: []webserver.VhostInfo{
+			{ServerName: "a.com", CertPath: "relative/fullchain.pem", CertKeyPath: "relative/privkey.pem"},
+		},
+	}
+	if _, _, ok := resolveVhostCertPaths(wsRel, "a.com"); ok {
+		t.Error("did not expect a match for relative cert paths")
+	}
+}
+
+func TestHandleCertInstall_ReloadCommand(t *testing.T) {
+	exe := newMockExecutor()
+	exe.commands["mkdir -p /etc/nginx/ssl"] = struct {
+		stdout string
+		stderr string
+		err    error
+	}{"", "", nil}
+	exe.commands["sh -c reload-nginx"] = struct {
+		stdout string
+		stderr string
+		err    error
+	}{"reloaded", "", nil}
+	exe.existsFiles["/etc/nginx"] = true
+
+	ctx := HandlerContext{
+		Parameters: map[string]any{
+			"domain":          "example.com",
+			"certificate_pem": "CERT",
+			"private_key_pem": "KEY",
+			"ca_bundle_pem":   "CA",
+			"web_server_type": "nginx",
+		},
+		Executor:      exe,
+		ReloadCommand: "reload-nginx",
+	}
+
+	result := handleCertInstall(ctx)
+
+	if result.Status != "success" {
+		t.Fatalf("expected success, got %s: %s", result.Status, result.Error)
+	}
+	if result.Output["reload_via"] != "reload_command" {
+		t.Errorf("expected reload_via=reload_command, got %v", result.Output["reload_via"])
+	}
+
+	// Fullchain (cert + CA) must be written to the cert path.
+	certPath := result.Output["cert_path"].(string)
+	if got := string(exe.files[certPath]); got != "CERT\nCA" {
+		t.Errorf("expected fullchain 'CERT\\nCA', got %q", got)
+	}
+}
+
+func TestHandleCertInstall_ReloadCommandFails(t *testing.T) {
+	exe := newMockExecutor()
+	exe.commands["mkdir -p /etc/nginx/ssl"] = struct {
+		stdout string
+		stderr string
+		err    error
+	}{"", "", nil}
+	exe.commands["sh -c bad-reload"] = struct {
+		stdout string
+		stderr string
+		err    error
+	}{"", "boom", fmt.Errorf("exit 1")}
+	exe.existsFiles["/etc/nginx"] = true
+
+	ctx := HandlerContext{
+		Parameters: map[string]any{
+			"domain":          "example.com",
+			"certificate_pem": "CERT",
+			"private_key_pem": "KEY",
+			"web_server_type": "nginx",
+		},
+		Executor:      exe,
+		ReloadCommand: "bad-reload",
+	}
+
+	result := handleCertInstall(ctx)
+
+	if result.Status != "failure" {
+		t.Fatalf("expected failure when reload command fails, got %s", result.Status)
+	}
+	if !strings.Contains(result.Error, "reload command failed") {
+		t.Errorf("unexpected error: %s", result.Error)
+	}
+}
 
 func TestHandleCertInstall_Nginx(t *testing.T) {
 	exe := newMockExecutor()

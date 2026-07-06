@@ -25,12 +25,13 @@ type ExecutionResult struct {
 
 // ExecutorDeps holds dependencies for command execution.
 type ExecutorDeps struct {
-	AgentSecret string
-	HTTPClient  *httpclient.Client
-	Executor    platform.Executor
-	NonceStore  *security.NonceStore
-	TimeoutMs   int
-	ConfigPath  string
+	AgentSecret   string
+	HTTPClient    *httpclient.Client
+	Executor      platform.Executor
+	NonceStore    *security.NonceStore
+	TimeoutMs     int
+	ConfigPath    string
+	ReloadCommand string
 }
 
 // ExecuteCommand validates and executes a command message.
@@ -88,10 +89,11 @@ func ExecuteCommand(cmd httpclient.CommandMessage, deps ExecutorDeps) ExecutionR
 	ch := make(chan handlerResult, 1)
 	go func() {
 		hCtx := HandlerContext{
-			Parameters: cmd.Parameters,
-			Executor:   deps.Executor,
-			HTTPClient: deps.HTTPClient,
-			ConfigPath: deps.ConfigPath,
+			Parameters:    cmd.Parameters,
+			Executor:      deps.Executor,
+			HTTPClient:    deps.HTTPClient,
+			ConfigPath:    deps.ConfigPath,
+			ReloadCommand: deps.ReloadCommand,
 		}
 		r := handler(hCtx)
 		ch <- handlerResult{result: r}
