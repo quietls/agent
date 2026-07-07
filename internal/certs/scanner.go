@@ -1,9 +1,11 @@
 package certs
 
 import (
+	"crypto/x509"
+	"encoding/pem"
 	"path/filepath"
-	"regexp"
 	"strings"
+	"time"
 
 	"github.com/quietls/agent/internal/platform"
 )
@@ -17,6 +19,10 @@ type CertInfo struct {
 
 // ScanCerts inspects the given certificate file paths and returns info for each.
 // Paths are typically extracted from web server vhost configs (ssl_certificate / SSLCertificateFile).
+//
+// Certificates are parsed in-process with crypto/x509 (rather than shelling out
+// to `openssl`), so this works in minimal/sidecar containers that don't ship an
+// openssl binary. Expiry is reported as an RFC3339 UTC timestamp.
 func ScanCerts(exe platform.Executor, certPaths []string) []CertInfo {
 	seen := make(map[string]struct{})
 	var certs []CertInfo
@@ -36,16 +42,9 @@ func ScanCerts(exe platform.Executor, certPaths []string) []CertInfo {
 
 		cert := CertInfo{Path: p}
 
-		// Get expiry date
-		stdout, _, err := exe.ExecCommand("openssl", "x509", "-enddate", "-noout", "-in", p)
-		if err == nil {
-			cert.Expires = parseNotAfter(stdout)
-		}
-
-		// Get domain from certificate subject
-		stdout, _, err = exe.ExecCommand("openssl", "x509", "-subject", "-noout", "-in", p)
-		if err == nil {
-			cert.Domain = parseSubjectCN(stdout)
+		if leaf := parseLeafCertificate(exe, p); leaf != nil {
+			cert.Expires = leaf.NotAfter.UTC().Format(time.RFC3339)
+			cert.Domain = certCommonName(leaf)
 		}
 
 		certs = append(certs, cert)
@@ -54,22 +53,41 @@ func ScanCerts(exe platform.Executor, certPaths []string) []CertInfo {
 	return certs
 }
 
-var notAfterRe = regexp.MustCompile(`notAfter=(.+)`)
-
-func parseNotAfter(output string) string {
-	matches := notAfterRe.FindStringSubmatch(strings.TrimSpace(output))
-	if len(matches) >= 2 {
-		return strings.TrimSpace(matches[1])
+// parseLeafCertificate reads a PEM file (which may be a fullchain) and returns
+// the first CERTIFICATE block parsed as an x509 certificate (the leaf).
+func parseLeafCertificate(exe platform.Executor, path string) *x509.Certificate {
+	data, err := exe.ReadFile(path)
+	if err != nil {
+		return nil
 	}
-	return ""
+
+	for {
+		var block *pem.Block
+		block, data = pem.Decode(data)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		leaf, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil
+		}
+		return leaf
+	}
+
+	return nil
 }
 
-var subjectCNRe = regexp.MustCompile(`CN\s*=\s*([^\s/,]+)`)
-
-func parseSubjectCN(output string) string {
-	matches := subjectCNRe.FindStringSubmatch(output)
-	if len(matches) >= 2 {
-		return strings.TrimSpace(matches[1])
+// certCommonName returns the certificate's subject CN, falling back to the
+// first Subject Alternative Name when the CN is empty (common for modern certs).
+func certCommonName(cert *x509.Certificate) string {
+	if cn := strings.TrimSpace(cert.Subject.CommonName); cn != "" {
+		return cn
+	}
+	if len(cert.DNSNames) > 0 {
+		return cert.DNSNames[0]
 	}
 	return ""
 }

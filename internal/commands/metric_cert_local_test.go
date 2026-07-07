@@ -1,9 +1,38 @@
 package commands
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"strings"
 	"testing"
+	"time"
 )
+
+// makeCertPEM builds a self-signed certificate PEM for testing cert parsing.
+func makeCertPEM(t *testing.T, cn string, notAfter time.Time) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: cn},
+		DNSNames:     []string{cn},
+		NotBefore:    notAfter.Add(-24 * time.Hour),
+		NotAfter:     notAfter,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
 
 func TestHandleMetricCertLocal_DisallowedPath(t *testing.T) {
 	exe := newMockExecutor()
@@ -55,10 +84,10 @@ func TestHandleMetricCertLocal_NoCertPathFound(t *testing.T) {
 	}
 }
 
-func TestHandleMetricCertLocal_CertPathProvided_OpensslFails(t *testing.T) {
+func TestHandleMetricCertLocal_CertPathProvided_UnparseableCert(t *testing.T) {
 	exe := newMockExecutor()
-	// openssl commands will fail since they're not in the mock
-	// ScanCerts returns 1 entry with empty fields, so handler returns success
+	// No file content at the path — ScanCerts returns 1 entry with empty fields,
+	// so the handler still returns success (the path was inspected).
 
 	handler := GetHandler("metric.cert-local")
 	result := handler(HandlerContext{
@@ -70,26 +99,17 @@ func TestHandleMetricCertLocal_CertPathProvided_OpensslFails(t *testing.T) {
 	})
 
 	if result.Status != "success" {
-		t.Errorf("expected success (ScanCerts returns entry even on openssl failure), got %s", result.Status)
+		t.Errorf("expected success (ScanCerts returns entry even when unparseable), got %s", result.Status)
 	}
-	// The cert entry has empty subject/expires since openssl failed
 	if result.Output["subject"] != "" {
-		t.Errorf("expected empty subject on openssl failure, got %v", result.Output["subject"])
+		t.Errorf("expected empty subject for unparseable cert, got %v", result.Output["subject"])
 	}
 }
 
 func TestHandleMetricCertLocal_CertPathProvided_Success(t *testing.T) {
 	exe := newMockExecutor()
-	exe.commands["openssl x509 -enddate -noout -in /etc/ssl/cert.pem"] = struct {
-		stdout string
-		stderr string
-		err    error
-	}{"notAfter=Jun 25 12:00:00 2026 GMT\n", "", nil}
-	exe.commands["openssl x509 -subject -noout -in /etc/ssl/cert.pem"] = struct {
-		stdout string
-		stderr string
-		err    error
-	}{"subject=CN = example.com\n", "", nil}
+	exp := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	exe.files["/etc/ssl/cert.pem"] = makeCertPEM(t, "example.com", exp)
 
 	handler := GetHandler("metric.cert-local")
 	result := handler(HandlerContext{
@@ -103,8 +123,8 @@ func TestHandleMetricCertLocal_CertPathProvided_Success(t *testing.T) {
 	if result.Status != "success" {
 		t.Errorf("expected success, got %s", result.Status)
 	}
-	if result.Output["expires"] != "Jun 25 12:00:00 2026 GMT" {
-		t.Errorf("expected expires, got %v", result.Output["expires"])
+	if result.Output["expires"] != exp.Format(time.RFC3339) {
+		t.Errorf("expected expires %s, got %v", exp.Format(time.RFC3339), result.Output["expires"])
 	}
 	if result.Output["subject"] != "example.com" {
 		t.Errorf("expected subject example.com, got %v", result.Output["subject"])
