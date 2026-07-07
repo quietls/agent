@@ -45,10 +45,11 @@ type WebServerContext struct {
 }
 
 type RegisterContext struct {
-	OS           OSContext         `json:"os"`
-	WebServer    *WebServerContext `json:"web_server"`
-	Runtime      string            `json:"runtime"`
-	AgentVersion string            `json:"agent_version"`
+	OS              OSContext         `json:"os"`
+	WebServer       *WebServerContext `json:"web_server"`
+	Runtime         string            `json:"runtime"`
+	AgentVersion    string            `json:"agent_version"`
+	PlatformProfile string            `json:"platform_profile,omitempty"`
 }
 
 type RegisterRequest struct {
@@ -119,11 +120,12 @@ type PortsContext struct {
 }
 
 type ContextUpdateRequest struct {
-	OS        OSContext               `json:"os"`
-	WebServer *WebServerUpdateContext `json:"web_server"`
-	Runtime   string                  `json:"runtime"`
-	Ports     PortsContext            `json:"ports"`
-	Domains   []string                `json:"domains"`
+	OS              OSContext               `json:"os"`
+	WebServer       *WebServerUpdateContext `json:"web_server"`
+	Runtime         string                  `json:"runtime"`
+	Ports           PortsContext            `json:"ports"`
+	Domains         []string                `json:"domains"`
+	PlatformProfile string                  `json:"platform_profile,omitempty"`
 }
 
 type AgentConfigResponse struct {

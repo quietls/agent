@@ -269,15 +269,19 @@ func (d *Daemon) sendContextUpdate() {
 
 	var wsCtx *httpclient.WebServerUpdateContext
 	domains := []string{}
+	wsType := ""
 	if ws != nil {
 		wsCtx = &httpclient.WebServerUpdateContext{
 			Type:    ws.Type,
 			Version: ws.Version,
 		}
+		wsType = ws.Type
 		for _, v := range ws.Vhosts {
 			domains = append(domains, v.ServerName)
 		}
 	}
+
+	profile := platform.DetectProfile(osInfo, wsType, runtimeName)
 
 	err := d.client.UpdateContext(httpclient.ContextUpdateRequest{
 		OS: httpclient.OSContext{
@@ -291,7 +295,8 @@ func (d *Daemon) sendContextUpdate() {
 			Port80:  ports.Port80,
 			Port443: ports.Port443,
 		},
-		Domains: domains,
+		Domains:         domains,
+		PlatformProfile: profile,
 	})
 	if err != nil {
 		d.deps.Logger.Warn("Context update failed", "error", err.Error())

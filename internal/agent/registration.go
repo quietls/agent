@@ -74,6 +74,13 @@ func Setup(opts SetupOptions, deps SetupDeps) error {
 	// Detect runtime
 	runtime := platform.DetectRuntime(deps.Executor)
 
+	// Detect platform profile
+	var wsType string
+	if ws != nil {
+		wsType = ws.Type
+	}
+	profile := platform.DetectProfile(osInfo, wsType, runtime)
+
 	// Get hostname
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -93,9 +100,10 @@ func Setup(opts SetupOptions, deps SetupDeps) error {
 				Version: osInfo.Version,
 				Arch:    osInfo.Arch,
 			},
-			WebServer:    wsCtx,
-			Runtime:      runtime,
-			AgentVersion: opts.AgentVersion,
+			WebServer:       wsCtx,
+			Runtime:         runtime,
+			AgentVersion:    opts.AgentVersion,
+			PlatformProfile: profile,
 		},
 	})
 	if err != nil {
@@ -103,13 +111,15 @@ func Setup(opts SetupOptions, deps SetupDeps) error {
 	}
 
 	// Save config
+	profileStr := profile
 	cfg := &Config{
-		AgentID:      resp.AgentID,
-		AgentToken:   resp.AgentToken,
-		AgentSecret:  resp.AgentSecret,
-		BaseURL:      opts.BaseURL,
-		PollInterval: 30,
-		Version:      opts.AgentVersion,
+		AgentID:         resp.AgentID,
+		AgentToken:      resp.AgentToken,
+		AgentSecret:     resp.AgentSecret,
+		BaseURL:         opts.BaseURL,
+		PollInterval:    30,
+		Version:         opts.AgentVersion,
+		PlatformProfile: &profileStr,
 	}
 
 	if err := SaveConfig(cfg, opts.ConfigPath, deps.FileIO); err != nil {
