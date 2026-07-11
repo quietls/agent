@@ -1,6 +1,72 @@
-# ssl-agent
+# QuietLS Agent
 
-SSL/TLS visibility extender — a Go binary that runs on customer servers to see and fix the cert problems your CDN hides. It extends external monitoring with origin-level TLS configuration drift detection, local certificate health checks, and automated cert installation where ACME doesn't reach.
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
+[![Release](https://img.shields.io/github/v/release/quietls/agent)](https://github.com/quietls/agent/releases)
+[![Docker Pulls](https://img.shields.io/docker/pulls/quietls/agent)](https://hub.docker.com/r/quietls/agent)
+[![Go Report Card](https://goreportcard.com/badge/github.com/quietls/agent)](https://goreportcard.com/report/github.com/quietls/agent)
+[![Tests](https://github.com/quietls/agent/actions/workflows/tests.yml/badge.svg)](https://github.com/quietls/agent/actions/workflows/tests.yml)
+
+The open-source server agent for [QuietLS](https://quietls.com) — set-and-forget SSL
+monitoring and renewal for developers who are their own DevOps.
+
+This is the only QuietLS code that runs on your servers. It's open source so you can
+read every line before you let it near your certificates.
+
+## Quickstart
+
+On a VPS (Ubuntu/Debian/CentOS/RHEL/AlmaLinux/Rocky, systemd):
+
+```bash
+SSL_AGENT_TOKEN=<token> curl -sSL https://quietls.com/v1/agents/install | sh
+```
+
+Or as a Docker sidecar:
+
+```bash
+docker run --rm \
+  -e SSL_AGENT_TOKEN=<token> \
+  -v ssl-agent-config:/etc/ssl-agent \
+  quietls/agent:latest setup
+```
+
+Get a token from your [QuietLS dashboard](https://quietls.com) (free for 1 domain).
+Prefer not to pipe to `sh`? The script is [scripts/install.sh](./scripts/install.sh) —
+read it first, then run it however you like.
+
+## What it does
+
+A single static Go binary (~6 MB) that extends QuietLS's external monitoring with the
+things only visible from inside your server:
+
+- **Origin TLS drift detection** — sees the certificate and TLS config your CDN hides,
+  and alerts when they change.
+- **Local certificate health** — expiry and validity checks for certs on any port,
+  including SMTP, IMAP, and internal services external scanners can't reach.
+- **Certificate installation where ACME doesn't reach** — installs renewed certificates
+  into Nginx or Apache and reloads them, on hosts or in Docker sidecar setups.
+- **Works behind CDNs** — Cloudflare in front? The agent watches the origin cert that
+  external checks never see.
+
+## Security model
+
+Root-adjacent access to your server demands more than promises. The agent never sees or
+transmits your private keys, doesn't read traffic or logs, and cannot run arbitrary
+shell — only the nine commands compiled into the registry.
+
+- **Allowlist-only execution** — only registered command IDs in the compiled registry are accepted; no arbitrary shell
+- **HMAC-SHA256 signing** — every command from the backend is signed; the agent verifies the signature using a shared secret before execution
+- **Timestamp validation** — commands with stale timestamps are rejected
+- **Nonce replay protection** — LRU nonce store (10,000 entries) prevents command replay
+- **Timing-safe comparison** — signature verification uses `crypto/subtle.ConstantTimeCompare`
+- **Dedicated system user** — runs as low-privilege `ssl-agent` user (`nologin` shell)
+- **Restricted config permissions** — config file written with `0600`, directory with `0700`
+
+## Why is this open source?
+
+Because "trust me" isn't a security model. QuietLS is built by
+[one person](https://quietls.com/#founder), and the honest way to earn root-adjacent
+access to your servers is to let you audit the code that gets it. The hosted control
+plane is the paid product; the agent is yours to read, build, and verify. Apache-2.0.
 
 ## Architecture
 
@@ -61,13 +127,13 @@ docker run --rm quietls/agent:latest --help
 The bootstrapper script automates the full installation:
 
 ```bash
-SSL_AGENT_TOKEN=<token> wget -qO- https://quietls.com/v1/agents/install | sh
+SSL_AGENT_TOKEN=<token> curl -sSL https://quietls.com/v1/agents/install | sh
 ```
 
 This will:
 1. Detect OS, architecture, and init system
-2. Download the correct pre-built binary from GitHub Releases
-3. Verify SHA256 checksum
+2. Download the correct pre-built binary from the QuietLS API (`/v1/agents/download/<arch>`)
+3. Verify the signature and SHA256 checksum
 4. Place binary at `/usr/local/bin/ssl-agent`
 5. Register with the backend using the provided token
 6. Save config to `/etc/ssl-agent/config.json`
@@ -203,16 +269,6 @@ All authenticated requests include `Authorization: Bearer <token>` and `X-Agent-
 | POST   | `/agents/{id}/context`       | Yes  | Send full server context     |
 | GET    | `/agents/{id}/config`        | Yes  | Fetch agent configuration    |
 
-## Security
-
-- **Allowlist-only execution** — only registered command IDs in the compiled registry are accepted
-- **HMAC-SHA256 signing** — every command from the backend is signed; the agent verifies the signature using a shared secret before execution
-- **Timestamp validation** — commands with stale timestamps are rejected
-- **Nonce replay protection** — LRU nonce store (10,000 entries) prevents command replay
-- **Timing-safe comparison** — signature verification uses `crypto/subtle.ConstantTimeCompare`
-- **Dedicated system user** — runs as low-privilege `ssl-agent` user (`nologin` shell)
-- **Restricted config permissions** — config file written with `0600`, directory with `0700`
-
 ## Docker Support
 
 The agent detects Docker runtime by checking for `/.dockerenv`. In Docker
@@ -319,20 +375,24 @@ Run the detection test suite:
 
 ## Continuous Integration & Releases
 
-Two GitHub Actions workflows live in `.github/workflows/`:
+GitHub Actions workflows live in `.github/workflows/`:
 
 - **`tests.yml`** — runs `go test ./...` on every push and pull request.
-- **`docker-publish.yml`** — on a `v*` git tag, builds the multi-arch image and
-  pushes it to Docker Hub as `quietls/agent` (semver tags + `latest`).
+- **`release.yml`** — on every push to `main`: runs tests, bumps the patch
+  version, tags, builds the multi-arch image, pushes it to Docker Hub, and
+  creates a GitHub Release. Add `[skip release]` to a commit message to opt out.
+- **`docker-publish.yml`** — on a manually pushed `v*` tag (minor/major bumps),
+  builds the multi-arch image and pushes it to Docker Hub as `quietls/agent`
+  (semver tags + `latest`).
 
-Cutting a release:
+Cutting a minor/major release manually:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
-The publish workflow requires two repository secrets:
+The publish workflows require two repository secrets:
 
 | Secret               | Purpose                                             |
 |----------------------|-----------------------------------------------------|
